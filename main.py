@@ -25,16 +25,22 @@ roygbiv = [
 rb = ['#E81416', '#487DE7', '#E81416']
 r = ['#E81416', '#E81416']
 phase_cmap = LinearSegmentedColormap.from_list('phase_cmap', roygbiv)
-norm = Normalize(vmin=-cp.pi, vmax=cp.pi)
+norm = Normalize(vmin=-np.pi, vmax=np.pi)
 
-runtime = 30
-FPS = 60
-rk4_steps = 10
-lim = {'x': [-10, 10], 'y': [-10, 10], 'z': [0, 1]}
-ZOOM = 2
+plt.rcParams.update({
+    'text.usetex': True,
+    'font.family': 'Fira Sans',
+    'font.size': 12
+})
 
-x = cp.linspace(ZOOM * lim['x'][0], ZOOM * lim['x'][1], 750)
-y = cp.linspace(ZOOM * lim['y'][0], ZOOM * lim['y'][1], 750)
+runtime = 60
+fps = 60
+rk4_steps = 5
+lim = {'x': [-5, 5], 'y': [-5, 5], 'z': [0, 1]}
+zoom = 4
+
+x = cp.linspace(zoom * lim['x'][0], zoom * lim['x'][1], 500)
+y = cp.linspace(zoom * lim['y'][0], zoom * lim['y'][1], 500)
 x, y = cp.meshgrid(x, y, indexing="ij")
 dx = x[1,0] - x[0,0]
 dy = y[0,1] - y[0,0]
@@ -45,12 +51,12 @@ def T(p):
     d2pdy2 = cp.gradient(dpdy, dy, edge_order=2, axis=1)
     return -1/2 * (d2pdx2 + d2pdy2)
 
-V = lambda t, p: 0.5 * (x**2 + y**2) * p
+V = lambda t, p: 0.5 * 2 * (x**2 + y**2) * p
 
 H = lambda t, p: T(p) + V(t, p)
 pdv = lambda t, p: -1j * H(t,p)
 
-wavefunc = lambda y_, x_: cp.exp(-(x**2 + (y-2)**2)) * cp.exp(5j*x)
+wavefunc = lambda y_, x_: cp.exp(-((x+3)**2 + (y-2)**2)) * cp.exp(5j*x)
 
 def area(f, m):
     x_ = cp.linspace(x[0], x[-1], m)
@@ -61,10 +67,8 @@ def area(f, m):
 
 psi_0 = wavefunc(y, x) / cp.sqrt(area(wavefunc, 1000))
 
-
 def format_time(seconds):
     return f'{seconds // 3600:0>2.0f}:{(seconds % 3600) // 60:0>2.0f}:{seconds % 60:0>2.0f}'
-
 
 def solve_ivp(f, p0, t):
     def rk4(t_, p, h_):
@@ -81,17 +85,16 @@ def solve_ivp(f, p0, t):
     m = rk4_steps*(len(t)-1)
     t_0 = time.time()
     for i in range(1, len(t)):
-        sol[i] = sol[i-1]
         for j, _ in enumerate(cp.linspace(float(t[i-1]), float(t[i]), rk4_steps)):
-            sol[i] = rk4(t[i-1], sol[i], h/rk4_steps)
+            sol[i] = rk4(t[i-1], sol[i-1], h/rk4_steps)
             rem = (m / (n+1) - 1) * (time.time() - t_0)
             print(f'Evaluating RK4 step {(n:=(n+1))}/{m} ({n/m:.2%}) - {format_time(rem)}', end='\r')
-    print(f'\33[2K\rFinished evaluating RK4 steps in {format_time(time.time()-t_0)}')
+    print(f'\33[2K\rFinished evaluating {m} RK4 steps in {format_time(time.time()-t_0)}')
     return sol
 
-zoom_in = lambda a: a[len(x)/2 * (1-1/ZOOM):len(x)/2 * (1+1/ZOOM):, len(y)/2 * (1-1/ZOOM):len(y)/2 * (1+1/ZOOM):]
+zoom_in = lambda a: a[len(x)/2 * (1 - 1 / zoom):len(x) / 2 * (1 + 1 / zoom):, len(y) / 2 * (1 - 1 / zoom):len(y) / 2 * (1 + 1 / zoom):]
 
-psi = solve_ivp(pdv, psi_0, cp.linspace(0, runtime, runtime * FPS))
+psi = solve_ivp(pdv, psi_0, cp.linspace(0, runtime, runtime * fps))
 psi = cp.array([zoom_in(z) for z in psi])
 mod = cp.abs(psi)
 arg = cp.angle(psi)
@@ -101,19 +104,25 @@ x, y = zoom_in(x), zoom_in(y)
 x, y, mod, arg, rho = map(lambda a: cp.real(a).get(), (x, y, mod, arg, rho))
 fc = phase_cmap(norm(arg))
 
-cp._default_memory_pool.free_all_blocks()
+def find_limit(a, p):
+    for e in np.linspace(np.max(a), 0, 100):
+        if np.count_nonzero(a>e) > 1-p:
+            return e
+    return 1
 
-#lim['z'][1] = min(1, np.max(mod))
-lim['z'][1] = min(1, np.max(rho))
+lim['z'][1] = find_limit(mod, .95)
+#lim['z'][1] = find_limit(rho, .95)
 def render_frame(i):
-    fig, ax = plt.subplots(figsize=(10.8, 10.8), subplot_kw={'projection': '3d'})
+    fig, ax = plt.subplots(figsize=(12, 10), subplot_kw={'projection': '3d'})
     canvas = FigureCanvasAgg(fig)
     ax.clear()
 
     ax.set(xlim=lim['x'], ylim=lim['y'], zlim=lim['z'], xlabel='x', ylabel='y', zlabel='r')
-    #ax.plot_surface(x, y, mod[i], facecolors=fc[i])
-    ax.plot_surface(x, y, rho[i], cmap='viridis')
-    ax.view_init(elev=30, azim=-45)
+    surf = ax.plot_surface(x, y, mod[i], facecolors=fc[i], antialiased=False)
+    cbar = fig.colorbar(surf, shrink=0.5)
+    cbar.set_ticks(ticks=[0, 1/4, 1/2, 3/4, 1], labels=['$-\\pi$', '$-\\frac{\\pi}{2}$', '$0$', '$\\frac{\\pi}{2}$', '$\\pi$'])
+    #ax.plot_surface(x, y, rho[i], cmap='viridis', antialiased=False)
+    ax.view_init(elev=25, azim=25)
     ax.set_title(f'Frame {i + 1}/{len(mod)}')
 
     canvas.draw()
@@ -129,12 +138,12 @@ render_args = range(len(psi))
 time_0 = time.time()
 with Pool(num_workers) as pool:
     for frame, _ in enumerate(pool.imap(render_frame, render_args), 1):
-        progress = frame / len(mod)
+        progress = frame / len(psi)
         elapsed = time.time() - time_0
         remaining = (1 / progress - 1) * elapsed
-        print(f'Rendered {frame}/{len(mod)} frames ({progress:.2%}) - {format_time(remaining)}', end='\r')
-print(f'\33[2K\rFinished rendering in {format_time(time.time()-time_0)}')
+        print(f'Rendered {frame}/{len(psi)} frames ({progress:.2%}) - {format_time(remaining)}', end='\r')
+print(f'\33[2K\rFinished rendering {len(psi)} frames in {format_time(time.time()-time_0)}')
 
 subprocess.run('rm media/output.mp4', shell=True, capture_output=True)
-subprocess.run(f'ffmpeg -r {FPS} -i media/frames/frame_%04d.png -pix_fmt yuv420p media/output.mp4', shell=True, capture_output=True)
-subprocess.run('mpv media/output.mp4', shell=True)
+subprocess.run(f'ffmpeg -r {fps} -i media/frames/frame_%04d.png -pix_fmt yuv420p media/output.mp4', shell=True, capture_output=True)
+subprocess.run('mpv media/output.mp4', shell=True, capture_output=True)
