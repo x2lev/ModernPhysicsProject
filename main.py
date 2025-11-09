@@ -28,10 +28,11 @@ r = ['#E81416', '#E81416']
 phase_cmap = LinearSegmentedColormap.from_list('phase_cmap', roygbiv)
 norm = Normalize(vmin=-cp.pi, vmax=cp.pi)
 
-runtime = 30
-FPS = 60
-lim = {'x': [-25, 25], 'y': [-25, 25], 'z': [0, 1]}
-ZOOM = 5
+runtime = 20
+FPS = 24
+rk4_steps = 10
+lim = {'x': [-10, 10], 'y': [-10, 10], 'z': [0, 1]}
+ZOOM = 2
 
 x = cp.linspace(ZOOM * lim['x'][0], ZOOM * lim['x'][1], 500)
 y = cp.linspace(ZOOM * lim['y'][0], ZOOM * lim['y'][1], 500)
@@ -39,16 +40,18 @@ x, y = cp.meshgrid(x, y, indexing="ij")
 dx = x[1,0] - x[0,0]
 dy = y[0,1] - y[0,0]
 
-#wavefunc = lambda y_, x_: cp.cos(x_**2 + y_**2) / (x_**2 + y_**2 + 1)**2
+def T(p):
+    dpdx, dpdy = cp.gradient(p, dx, dy, edge_order=2)
+    d2pdx2 = cp.gradient(dpdx, dx, edge_order=2, axis=0)
+    d2pdy2 = cp.gradient(dpdy, dy, edge_order=2, axis=1)
+    return -1/2 * (d2pdx2 + d2pdy2)
 
-#wavefunc = lambda y_, x_: (
-#    cp.exp(-((x_-5)**2 + y_**2)) * cp.exp(-5j * x_) +
-#    cp.exp(-((x_+5)**2 + y_**2)) * cp.exp(5j * x_)
-#)
+V = lambda t, p: 0.5 * (x**2 + y**2) * p
 
-r = lambda x_, y_: cp.sqrt(x_**2 + y_**2)
-theta = lambda x_, y_: cp.arctan2(y_, x_)
-wavefunc = lambda y_, x_: cp.exp(-r(x_, y_)**2 / 5) * cp.exp(1j * theta(x_, y_))
+H = lambda t, p: T(p) + V(t, p)
+pdv = lambda t, p: -1j * H(t,p)
+
+wavefunc = lambda y_, x_: cp.exp(-(x**2 + (y-2)**2)) * cp.exp(5j*x)
 
 def area(f, m):
     x_ = cp.linspace(x[0], x[-1], m)
@@ -58,25 +61,6 @@ def area(f, m):
     return cp.trapz(cp.trapz(f(y, x) * cp.conj(f(y, x)), dx=dy_), dx=dx_)
 
 psi_0 = wavefunc(y, x) / cp.sqrt(area(wavefunc, 100))
-
-#mod = cp.abs(psi_0)
-#arg = cp.angle(psi_0)
-#ax.set(xlim=lim['x'], ylim=lim['y'], zlim=lim['z'], xlabel='x', ylabel='y', zlabel='r')
-#ax.plot_surface(x.get(), y.get(), mod.get(), facecolors=phase_cmap(norm(arg.get())), edgecolor='none')
-#ax.set_title(f'Initial Condition')
-#plt.show()
-
-def T(p):
-    dpdx, dpdy = cp.gradient(p, dx, dy, edge_order=2)
-    d2pdx2 = cp.gradient(dpdx, dx, edge_order=2, axis=0)
-    d2pdy2 = cp.gradient(dpdy, dy, edge_order=2, axis=1)
-    return 0.5j * (d2pdx2 + d2pdy2)
-
-def V(t, p):
-    return 0
-
-def H(t, p):
-    return T(p) + V(t, p)
 
 def solve_ivp(f, p0, t):
     def rk4(t_, p, h_):
@@ -89,35 +73,39 @@ def solve_ivp(f, p0, t):
     h = t[1] - t[0]
     sol = cp.zeros(shape=(*t.shape, *p0.shape), dtype=complex)
     sol[0] = p0
-    steps = 10
+    n = 0
     for i in range(1, len(t)):
         sol[i] = sol[i-1]
-        for j, _ in enumerate(cp.linspace(float(t[i-1]), float(t[i]), steps)):
-            sol[i] = rk4(t[i-1], sol[i], h/steps)
-            print(f'RK4 step number {(n:=int(steps*(i-1)+j+1))}/{(m:=steps*(len(t)-1))} ({n/m:.2%})', end='\r')
+        for j, _ in enumerate(cp.linspace(float(t[i-1]), float(t[i]), rk4_steps)):
+            sol[i] = rk4(t[i-1], sol[i], h/rk4_steps)
+            print(f'Evaluating RK4 step {(n:=(n+1))}/{(m:=rk4_steps*(len(t)-1))} ({n/m:.2%})', end='\r')
     print()
     return sol
 
 zoom_in = lambda a: a[len(x)/2 * (1-1/ZOOM):len(x)/2 * (1+1/ZOOM):, len(y)/2 * (1-1/ZOOM):len(y)/2 * (1+1/ZOOM):]
 
-psi = cp.array([zoom_in(z) for z in solve_ivp(H, psi_0, cp.linspace(0, runtime, runtime * FPS))])
+psi = solve_ivp(pdv, psi_0, cp.linspace(0, runtime, runtime * FPS))
+psi = cp.array([zoom_in(z) for z in psi])
 mod = cp.abs(psi)
 arg = cp.angle(psi)
+rho = psi*cp.conj(psi)
 x, y = zoom_in(x), zoom_in(y)
 
-x, y, mod, arg = x.get(), y.get(), mod.get(), arg.get()
+x, y, mod, arg, rho = map(lambda a: cp.real(a).get(), (x, y, mod, arg, rho))
 fc = phase_cmap(norm(arg))
 
-lim['z'][1] = np.max(mod)*1
-for frame in range(len(psi)):
+cp._default_memory_pool.free_all_blocks()
+
+lim['z'][1] = min(1, np.max(mod))
+#lim['z'][1] = min(1, np.max(rho))
+for frame in range(len(mod)):
     print(f'Rendering frame {(n:=frame + 1)}/{(m:=len(mod))} ({n/m:.2%})', end='\r')
     ax.clear()
     ax.set(xlim=lim['x'], ylim=lim['y'], zlim=lim['z'], xlabel='x', ylabel='y', zlabel='r')
-    ax.plot_surface(x, y, mod[frame], facecolors=fc[frame], edgecolor='none')
+    ax.plot_surface(x, y, mod[frame], facecolors=fc[frame])
+    #ax.plot_surface(x, y, rho[frame], cmap='viridis')
+    ax.view_init(elev=30, azim=-45)
     ax.set_title(f'Frame {frame + 1}/{len(mod)}')
-
-    if frame % (FPS*10) == 0:
-        pass#plt.show()
 
     canvas.draw()
     iio.imwrite(f'media/frames/frame_{frame:04d}.png', np.asarray(canvas.buffer_rgba()))
