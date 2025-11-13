@@ -20,21 +20,26 @@ subprocess.run('rm -r media/frames/*', shell=True, capture_output=True)
 plt.rcParams.update({
     'text.usetex': True,
     'font.family': 'Fira Sans',
-    'font.size': 12
+    'font.size': 36
 })
 
-runtime = 30
+runtime = 40
 fps = 60
-split_steps = 1000
-surf_res = [500, 500]
+split_steps = 250
+surf_res = [100, 100]
+render_res = [3840, 2160]
 lim = {'x': [-10, 10], 'y': [-10, 10], 'z': [0, 1]}
 zoom = 1
+
+figsize = (render_res[0]/100, render_res[1]/100)
 
 x = cp.linspace(zoom * lim['x'][0], zoom * lim['x'][1], surf_res[0])
 y = cp.linspace(zoom * lim['y'][0], zoom * lim['y'][1], surf_res[1])
 x, y = cp.meshgrid(x, y, indexing='ij')
 dx = x[1, 0] - x[0, 0]
 dy = y[0, 1] - y[0, 0]
+
+assert 1/fps/split_steps < 1/2 *  dx**2
 
 device = cp.cuda.Device()
 device_name = cp.cuda.runtime.getDeviceProperties(device.id)['name'].decode()
@@ -46,26 +51,27 @@ kx, ky = cp.meshgrid(kx, ky, indexing='ij')
 k2 = kx ** 2 + ky ** 2
 
 #mask = (x<=.1) & (x>=-.1) & ((y>=2.5) | ((y<=1.5) & (y>=-1.5)) | (y<=-2.5))
-#inf = cp.full_like(x, 1000)
-#zero = cp.full_like(x, 0)
-#V_field = cp.where(mask, inf, zero)
-V_0 = 0.5 * (x ** 2 + y ** 2)
-V = lambda t: V_0
+mask = (x>7.5) | (y>7.5) | (x<-7.5) | (y<-7.5)
+#mask = x**2 + y**2 > 64
+inf = cp.full_like(x, 1_000_000)
+zero = cp.full_like(x, 0)
+V_0 = cp.where(mask, inf, zero)
+#V_0 = 0.5 * (x ** 2 + y ** 2)
+potential = lambda t: V_0
 
-wavefunc = lambda y_, x_: (
-    cp.exp(-((x_ + 5) ** 2 + y_ ** 2)/5) * cp.exp(-0.5j * x_ + 2j * y_)
-    + cp.exp(-((x_ - 5) ** 2 + y_ ** 2)/5) * cp.exp(0.5j * x_ - 2j * y_)
-)
+#wavefunc = lambda y_, x_: (
+#    cp.exp(-((x_ + 5) ** 2 + y_ ** 2)*2) * cp.exp(2j * y_)
+#    + cp.exp(-((x_ - 5) ** 2 + y_ ** 2)*2) * cp.exp(2j * y_)
+#    + cp.exp(-(x_ ** 2 + (y_ + 5) ** 2)*2) * cp.exp(2j * x_)
+#    + cp.exp(-(x_ ** 2 + (y_ - 5) ** 2)*2) * cp.exp(-2j * x_)
+#)
 
+wavefunc = cp.exp(-2*(x ** 2 + y ** 2))
 
-def area(f):
-    return cp.sum(f(y, x) * cp.conj(f(y, x))) * dx * dy
+area = cp.sum(wavefunc * cp.conj(wavefunc)) * dx * dy
+psi_0 = wavefunc / cp.sqrt(area)
 
-
-psi_0 = wavefunc(y, x) / cp.sqrt(area(wavefunc))
-
-
-def solve_ivp(p0, t):
+def solve_schrodinger(p0, t):
     h = (t[1] - t[0]) / split_steps
     sol = cp.zeros(shape=(*t.shape, *p0.shape), dtype=complex)
     sol[0] = p0
@@ -75,16 +81,16 @@ def solve_ivp(p0, t):
     for i in range(1, len(t)):
         sol[i] = sol[i - 1]
         for t_i in cp.linspace(t[i - 1], t[i], split_steps):
-            sol[i] = cp.exp(-0.5j * h * V(t_i)) * sol[i]
+            sol[i] = cp.exp(-0.5j * h * potential(t_i)) * sol[i]
             sol[i] = cp.fft.ifft2(cp.exp(-0.5j * h * k2) * cp.fft.fft2(sol[i]))
-            sol[i] = cp.exp(-0.5j * h * V(t_i)) * sol[i]
+            sol[i] = cp.exp(-0.5j * h * potential(t_i)) * sol[i]
             n += 1
         rem = (m / n - 1) * (time.time() - t_0)
         print(f'Evaluating split-step {n}/{m} ({n / m:.2%}) - {format_time(rem)}', end='\r')
     print(f'\33[2K\rFinished evaluating {m} split-steps in {format_time(time.time() - t_0)}')
     return sol
 
-psi = solve_ivp(psi_0, cp.linspace(0, runtime, runtime * fps))
+psi = solve_schrodinger(psi_0, cp.linspace(0, runtime, runtime * fps))
 
 if zoom > 1:
     zoom_in = lambda a: a[
@@ -130,7 +136,7 @@ x, y, mod, arg = map(lambda a: cp.real(a).get(), (x, y, mod, arg))
 #x, y, mod, arg, rho, fc = map(lambda a: cp.real(a).get(), (x, y, mod, arg, rho, fc))
 
 def render_frame(i):
-    fig, ax = plt.subplots(figsize=(12, 10), subplot_kw={'projection': '3d'})
+    fig, ax = plt.subplots(figsize=figsize, subplot_kw={'projection': '3d'})
     canvas = FigureCanvasAgg(fig)
     ax.clear()
 
