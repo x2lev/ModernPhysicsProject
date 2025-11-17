@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import cupy as cp
 import imageio.v3 as iio
+import questionary
 import subprocess
 import time
 
@@ -13,6 +14,13 @@ def format_time(seconds):
     seconds = int(seconds)
     return f'{seconds // 3600:0>2.0f}:{(seconds % 3600) // 60:0>2.0f}:{seconds % 60:0>2.0f}'
 
+def is_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
 
 subprocess.run('mkdir -p media/frames', shell=True)
 subprocess.run('rm -r media/frames/*', shell=True, capture_output=True)
@@ -20,26 +28,67 @@ subprocess.run('rm -r media/frames/*', shell=True, capture_output=True)
 plt.rcParams.update({
     'text.usetex': True,
     'font.family': 'Fira Sans',
-    'font.size': 36
+    'font.size': 24
 })
 
-runtime = 40
-fps = 60
-split_steps = 250
-surf_res = [100, 100]
-render_res = [3840, 2160]
-lim = {'x': [-10, 10], 'y': [-10, 10], 'z': [0, 1]}
-zoom = 1
+def preset_or_custom(name, choices, validator=None, cast=None):
+    if validator is None:
+        validator = lambda s: s.isnumeric()
+    if cast is None:
+        cast = int
 
-figsize = (render_res[0]/100, render_res[1]/100)
+    initial_choice = questionary.select(
+        f'Select {name}:',
+        choices + ['custom']
+    ).ask()
+    return cast(initial_choice if validator(initial_choice) else questionary.text(
+        f'Enter {name}:',
+        validator=validator
+    ).ask())
+
+runtime = preset_or_custom('runtime', ['10', '30', '60'])
+fps = preset_or_custom('FPS', ['60', '30', '10'])
+split_steps = preset_or_custom('split-steps count', ['250', '500', '1000'])
+surf_res = preset_or_custom(
+    'surface resolution',
+    ['100x100', '250x250', '500x500'],
+    validator=lambda s: all(h.isnumeric() for h in s.split('x')),
+    cast=lambda s: [int(h) for h in s.split('x')]
+)
+render_res = preset_or_custom(
+    'render resolution',
+    ['1920x1080', '3840x2160', '640x480'],
+    validator=lambda s: all(h.isnumeric() for h in s.split('x')),
+    cast=lambda s: [int(h) for h in s.split('x')]
+)
+
+lim = {
+    'x': preset_or_custom(
+        'x limits',
+        ['-5,5', '-10,10', '-20,20'],
+        validator=lambda s: all(is_number(h) for h in s.split(',')),
+        cast=lambda s: [float(h) for h in s.split(',')]
+    ), 'y': preset_or_custom(
+        'y limits',
+        ['-5,5', '-10,10', '-20,20'],
+        validator=lambda s: all(is_number(h) for h in s.split(',')),
+        cast=lambda s: [float(h) for h in s.split(',')]
+    ), 'z': [0, 1]
+}
+
+zoom = preset_or_custom('zoom', ['1', '2', '4'])
+
+dpi = 100
+figsize = (
+    (render_res[0]/dpi) // 2 * 2,
+    (render_res[1]/dpi) // 2 * 2
+)
 
 x = cp.linspace(zoom * lim['x'][0], zoom * lim['x'][1], surf_res[0])
 y = cp.linspace(zoom * lim['y'][0], zoom * lim['y'][1], surf_res[1])
 x, y = cp.meshgrid(x, y, indexing='ij')
 dx = x[1, 0] - x[0, 0]
 dy = y[0, 1] - y[0, 0]
-
-assert 1/fps/split_steps < 1/2 *  dx**2
 
 device = cp.cuda.Device()
 device_name = cp.cuda.runtime.getDeviceProperties(device.id)['name'].decode()
@@ -136,7 +185,7 @@ x, y, mod, arg = map(lambda a: cp.real(a).get(), (x, y, mod, arg))
 #x, y, mod, arg, rho, fc = map(lambda a: cp.real(a).get(), (x, y, mod, arg, rho, fc))
 
 def render_frame(i):
-    fig, ax = plt.subplots(figsize=figsize, subplot_kw={'projection': '3d'})
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi, subplot_kw={'projection': '3d'})
     canvas = FigureCanvasAgg(fig)
     ax.clear()
 
@@ -171,6 +220,5 @@ with Pool(threads) as pool:
 print(f'\33[2K\rFinished rendering {len(psi)} frames in {format_time(time.time() - time_0)}')
 
 subprocess.run('rm media/output.mp4', shell=True, capture_output=True)
-subprocess.run(f'ffmpeg -r {fps} -i media/frames/frame_%04d.png -pix_fmt yuv420p media/output.mp4', shell=True,
-               capture_output=True)
-subprocess.run('mpv media/output.mp4', shell=True, capture_output=True)
+subprocess.run(f'ffmpeg -r {fps} -i media/frames/frame_%04d.png -pix_fmt yuv420p media/output.mp4', shell=True)
+subprocess.run('mpv media/output.mp4', shell=True)
