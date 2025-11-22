@@ -33,7 +33,7 @@ plt.rcParams.update({
 
 def preset_or_custom(name, choices, validator=None, cast=None):
     if validator is None:
-        validator = lambda s: s.isnumeric()
+        validator = lambda s: s.isnumeric()  # noqa: E731
     if cast is None:
         cast = int
 
@@ -65,18 +65,23 @@ render_res = preset_or_custom(
 lim = {
     'x': preset_or_custom(
         'x limits',
-        ['-5,5', '-10,10', '-20,20'],
+        ['-10,10', '-5,5', '-1,1'],
         validator=lambda s: all(is_number(h) for h in s.split(',')),
         cast=lambda s: [float(h) for h in s.split(',')]
     ), 'y': preset_or_custom(
         'y limits',
-        ['-5,5', '-10,10', '-20,20'],
+        ['-10,10', '-5,5', '-1,1'],
         validator=lambda s: all(is_number(h) for h in s.split(',')),
         cast=lambda s: [float(h) for h in s.split(',')]
     ), 'z': [0, 1]
 }
 
 zoom = preset_or_custom('zoom', ['1', '2', '4'])
+
+render_wavefunction = questionary.select(
+    'What to render?',
+    ['complex wavefunction', 'probability density']
+).ask() == 'complex wavefunction'
 
 dpi = 100
 figsize = (
@@ -92,7 +97,7 @@ dy = y[0, 1] - y[0, 0]
 
 device = cp.cuda.Device()
 device_name = cp.cuda.runtime.getDeviceProperties(device.id)['name'].decode()
-print(f'Running computations on {device_name}...')
+print(f'Running CuPy on {device_name}...')
 
 kx = cp.fft.fftfreq(x.shape[0], d=dx) * 2 * cp.pi
 ky = cp.fft.fftfreq(y.shape[1], d=dy) * 2 * cp.pi
@@ -100,13 +105,14 @@ kx, ky = cp.meshgrid(kx, ky, indexing='ij')
 k2 = kx ** 2 + ky ** 2
 
 #mask = (x<=.1) & (x>=-.1) & ((y>=2.5) | ((y<=1.5) & (y>=-1.5)) | (y<=-2.5))
-mask = (x>7.5) | (y>7.5) | (x<-7.5) | (y<-7.5)
-#mask = x**2 + y**2 > 64
+#mask = (x+y>5) | (x+y<-5)
+mask = x**2 + y**2 > 64
 inf = cp.full_like(x, 1_000_000)
+one = cp.full_like(x, 1)
 zero = cp.full_like(x, 0)
 V_0 = cp.where(mask, inf, zero)
 #V_0 = 0.5 * (x ** 2 + y ** 2)
-potential = lambda t: V_0
+potential = lambda t: V_0  # noqa: E731
 
 #wavefunc = lambda y_, x_: (
 #    cp.exp(-((x_ + 5) ** 2 + y_ ** 2)*2) * cp.exp(2j * y_)
@@ -115,7 +121,7 @@ potential = lambda t: V_0
 #    + cp.exp(-(x_ ** 2 + (y_ - 5) ** 2)*2) * cp.exp(-2j * x_)
 #)
 
-wavefunc = cp.exp(-2*(x ** 2 + y ** 2))
+wavefunc = cp.exp(-(x**2+y**2))*cp.angle(x+1j*y)*cp.where(mask, zero, one)
 
 area = cp.sum(wavefunc * cp.conj(wavefunc)) * dx * dy
 psi_0 = wavefunc / cp.sqrt(area)
@@ -142,18 +148,21 @@ def solve_schrodinger(p0, t):
 psi = solve_schrodinger(psi_0, cp.linspace(0, runtime, runtime * fps))
 
 if zoom > 1:
-    zoom_in = lambda a: a[
+    zoom_in = lambda a: a[  # noqa: E731
         int(len(x) / 2 * (1 - 1 / zoom)): int(len(x) / 2 * (1 + 1 / zoom)):,
         int(len(y) / 2 * (1 - 1 / zoom)): int(len(y) / 2 * (1 + 1 / zoom)):
     ]
     psi = cp.array([zoom_in(z) for z in psi])
     x, y = zoom_in(x), zoom_in(y)
 
-mod = cp.abs(psi)
-arg = cp.angle(psi)
-#rho = psi*cp.conj(psi)
 
-roygbiv = cp.array([
+x, y, psi = x.get(), y.get(), psi.get()
+
+mod = np.abs(psi)
+arg = np.angle(psi)
+rho = np.abs(psi)**2
+
+roygbiv = np.array([
     (0.91, 0.078, 0.086),
     (1.0, 0.647, 0.0),
     (0.98, 0.922, 0.212),
@@ -164,25 +173,24 @@ roygbiv = cp.array([
     (0.91, 0.078, 0.086)
 ])
 
-def colormap(colors: cp.ndarray, a: cp.ndarray):
+def colormap(colors: np.ndarray, a: np.ndarray):
     c = (len(colors)-1) * a
     index = c.astype(int)
     return (colors[(index + 1)%len(colors)] - colors[index]) * (c - index)[:,:,:,None] + colors[index]
 
-phase_cmap = LinearSegmentedColormap.from_list('roygbiv', roygbiv.get())
-fc = phase_cmap(((arg-cp.min(arg))/(cp.max(arg) - cp.min(arg))).get())
+phase_cmap = LinearSegmentedColormap.from_list('roygbiv', roygbiv)
+fc = phase_cmap(((arg-np.min(arg))/(np.max(arg) - np.min(arg))))
 
-def find_limit(a: cp.ndarray, p):
-    for e in cp.linspace(cp.max(a), 0, 100):
-        if cp.count_nonzero(a > e) > 1 - p:
+def find_limit(a: np.ndarray, p):
+    for e in np.linspace(cp.max(a), 0, 100):
+        if np.count_nonzero(a > e) > 1 - p:
             return e
     return 1
 
-lim['z'][1] = float(find_limit(mod, .95))
-#lim['z'][1] = find_limit(rho, .95)
-
-x, y, mod, arg = map(lambda a: cp.real(a).get(), (x, y, mod, arg))
-#x, y, mod, arg, rho, fc = map(lambda a: cp.real(a).get(), (x, y, mod, arg, rho, fc))
+if render_wavefunction:
+    lim['z'][1] = float(find_limit(mod, .95))
+else:
+    lim['z'][1] = float(find_limit(rho, .95))
 
 def render_frame(i):
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi, subplot_kw={'projection': '3d'})
@@ -190,13 +198,15 @@ def render_frame(i):
     ax.clear()
 
     ax.set(xlim=lim['x'], ylim=lim['y'], zlim=lim['z'], xlabel='$x$', ylabel='$y$', zlabel='$r$')
-    surf = ax.plot_surface(x, y, mod[i], cmap=phase_cmap, facecolors=fc[i], antialiased=True)  #, edgecolor='black', linewidth=0.25)
-    cbar = fig.colorbar(surf, shrink=0.5, label='$\\theta$')
-    cbar.set_ticks(
-        ticks=[0, 1 / 4, 1 / 2, 3 / 4, 1],
-        labels=['$-\\pi$', '$-\\frac{\\pi}{2}$', '$0$', '$\\frac{\\pi}{2}$', '$\\pi$']
-    )
-    #ax.plot_surface(x, y, rho[i], cmap='viridis', antialiased=False)
+    if render_wavefunction:
+        surf = ax.plot_surface(x, y, mod[i], cmap=phase_cmap, facecolors=fc[i], antialiased=True)  #, edgecolor='black', linewidth=0.25)
+        cbar = fig.colorbar(surf, shrink=0.5, label='$\\theta$')
+        cbar.set_ticks(
+            ticks=[0, 1 / 4, 1 / 2, 3 / 4, 1],
+            labels=['$-\\pi$', '$-\\frac{\\pi}{2}$', '$0$', '$\\frac{\\pi}{2}$', '$\\pi$']
+        )
+    else:
+        ax.plot_surface(x, y, rho[i], cmap='viridis', antialiased=True)
     ax.view_init(elev=25, azim=25)
     ax.set_title(f'Frame {i + 1}/{len(mod)}')
 
@@ -206,8 +216,7 @@ def render_frame(i):
 
 
 threads = cpu_count() - 1  # Leave one core free
-print(f'Rendering on {threads} threads...')
-
+print(f'Rendering with Matplotlib on {threads} threads...')
 render_args = range(len(psi))
 
 time_0 = time.time()
