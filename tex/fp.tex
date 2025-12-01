@@ -1,0 +1,95 @@
+\documentclass[12pt]{article}
+
+\usepackage[margin=2cm]{geometry}
+\usepackage[affil-it]{authblk}
+\renewcommand{\Affilfont}{\normalsize\itshape}
+
+\usepackage{amsfonts,amssymb,amscd,amsmath,amsthm,verbatim,calc,graphics,graphicx,physics}
+
+\usepackage{lipsum}
+
+\usepackage{listings}
+\lstset{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!60!black},
+    stringstyle=\color{red},
+    showstringspaces=false,
+    numbers=left,
+    numberstyle=\tiny,
+    breaklines=true
+}
+
+\usepackage[
+    backend=biber,
+    style=numeric,
+    sorting=nty
+]{biblatex}
+\addbibresource{fp.bib}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\Q}{\mathbb{Q}}
+\newcommand{\C}{\mathbb{C}}
+
+\usepackage{hyperref}
+
+\title{Simulating 2D Wavefunction Evolution with Matplotlib}
+\author{Lev Kryvenko}
+\affil{Department of Physics, University of Colorado at Boulder}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+    We implement a numerical solver for the two-dimensional Schr\"odinger equation using the split-step method in Python, utilizing the GPU-accelerated CuPy library to compute solutions given an arbitrary potential field and initial wavefunction. We then render the solution using Matplotlib to visualize the time-evolution of the complex wavefunction.
+\end{abstract}
+
+\section{Introduction}
+The famous \textit{Schr\"odinger equation} that every physics undergraduate learns is
+\[ i\hbar\pdv{\Psi}{t} = \hat{H}\Psi. \]
+It is simple and elegant, stating that the time-evolution of a quantum system depends only on the Hamiltonian. But what is the Hamiltonian, and why are we multiplying it by $\Psi$?
+
+Classically, the  Hamiltonian represents the total energy of the system. When we know the values of the kinetic and potential energy of the system, we can write the Hamiltonian simply as the sum of the two, $H=T+V$. This idea can be extended to quantum mechanics, though with a slight change in approach. Instead of treating $H$, $T$, and $V$ as having some value, instead we treat them as \textit{operators} (and put little hats on them).
+
+Operators depending on position typically just left-multiply the state that they are acting on, which is the case with the potential operator. Therefore, often $\hat{V}=V(x)$. Meanwhile, the kinetic operator, because it is derived from momentum, involves differentiation with respect to position. Specifically, $\hat{T}=-\frac{1}{2m}\laplacian$.\footnote{For a derivation, see sections 8.1, 8.2, and 9.2 of Leonard Susskind and Art Friedman's book. \cite{susskind}} Thus, if we wish to expand Schr\"odinger equation, we can rewrite it as 
+\[ i\hbar\pdv{\Psi}{t} = \hat{T}\Psi + \hat{V}\Psi = -\frac{1}{2m}\laplacian{\Psi} + V(x)\Psi.\footnotemark \]
+And if we choose ``natural units'' (that is, $\hbar=m=1$) and multiply by $-i$, we can simplify this to
+\[ \pdv{\Psi}{t} = -i\hat{T}\Psi - i\hat{V}\Psi = \frac{i}{2}\laplacian{\Psi} - iV(x)\Psi. \]
+It will be this equation that we will work to solve numerically.
+
+\footnotetext{We choose $V$ independent of time to simplify the computations later on. This is not because it is particularly difficult to numerically solve the Schr\"odinger equation with a time-dependent potential, but that it ends up either blowing up memory requirements or needlessly extends the time it takes to perform the calculations.}
+
+\section{Split-Operator Method}
+Most of the work in the following section is adapted Shuai Wu's article \cite{wu}. Recall the operator expression of the Schr\"odinger equation, $\pdv{\Psi}{t} = -i\hat{T}\Psi - i\hat{V}\Psi$. If we factor the right-hand side of the equation we get that
+\[ \pdv{\Psi}{t} = (-i\hat{T} - i\hat{V})\Psi. \]
+It may surprise you that we can essentially solve this equation if we treat $x$ as a parameter, arriving at the simple exponential
+\[ \Psi(t) = e^{(-i\hat{T} - i\hat{V})t}. \]
+Now consider a small time-step $\Delta t$. Replacing $t$ with $t+\Delta t$, we get that
+\[ \Psi(t+\Delta t) = e^{(-i\hat{T} - i\hat{V})(t+\Delta t)} = e^{(-i\hat{T} - i\hat{V})t}e^{(-i\hat{T} - i\hat{V})\Delta t}. \]
+Recognize that the first of these exponentials is simply our $\Psi(t)$ from earlier. Therefore, 
+\[ \Psi(t+\Delta t) = e^{(-i\hat{T} - i\hat{V})\Delta t}\Psi(t). \]
+This ends up being a very convenient result---we now have a formula to find the state some small time-step in the future given our present state. Computers are great at solving this kind of problem! Our issue now is dealing with the other exponential: what does it mean to exponentiate an operator? And what does it mean to exponentiate two of them? 
+
+Somewhat surprisingly, this second question is a bit easier to answer. 
+
+\section{References}
+\begin{enumerate}
+    \item Leonard Susskind and Art Friedman, \textit{Quantum Mechanics: The Theoretical Minimum}, Basic Books, 2014.
+
+    \item \label{1} Shuai Wu, \href{https://shuai-wu-math.github.io/notes/OSM.pdf}{``Operator Splitting Method for Schr\"odinger Equation''}, accessed November 2025.
+
+    \item \label{2} Christina C. Lee, \href{https://albi3ro.github.io/M4/Time-Evolution.html}{``Time Evolution Split Operator Method''}, accessed November 2025.
+    
+    \item \label{3} James Schloss, \href{https://www.algorithm-archive.org/contents/split-operator_method/split-operator_method.html}{``The Split-Operator Method''}, accessed November 2025.
+    
+    \item \label{4} Russell Herman, \href{https://math.libretexts.org/Bookshelves/Differential_Equations/Introduction_to_Partial_Differential_Equations_(Herman)/09%3A_Transform_Techniques_in_Physics/9.05%3A_Properties_of_the_Fourier_Transform}{``Properties of the Fourier Transform''}, accessed November 2025.
+\end{enumerate}
+
+\printbibliography
+
+\end{document}

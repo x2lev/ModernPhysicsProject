@@ -5,7 +5,10 @@ import cupy as cp
 import imageio.v3 as iio
 import questionary
 import subprocess
+import shutil
 import time
+import json
+import os
 
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -22,66 +25,73 @@ def is_number(s):
         return False
 
 
-subprocess.run('mkdir -p media/frames', shell=True)
-subprocess.run('rm -r media/frames/*', shell=True, capture_output=True)
+os.makedirs('media/frames', exist_ok=True)
+for file in os.listdir('media/frames'):
+    os.remove(os.path.join('media/frames', file))
 
 plt.rcParams.update({
     'text.usetex': True,
     'font.family': 'Fira Sans',
-    'font.size': 24
+    'font.size': 20
 })
 
-def preset_or_custom(name, choices, validator=None, cast=None):
-    if validator is None:
-        validator = lambda s: s.isnumeric()  # noqa: E731
-    if cast is None:
-        cast = int
+config_path = questionary.select(
+    'Choose file to read configuration from (you may edit any of these as you wish. see custom.jsonc for explanations as to what each parameter changes):',
+    [f'configurations/{c}' for c in os.listdir('configurations')]
+).ask()
 
-    initial_choice = questionary.select(
-        f'Select {name}:',
-        choices + ['custom']
-    ).ask()
-    return cast(initial_choice if validator(initial_choice) else questionary.text(
-        f'Enter {name}:',
-        validator=validator
-    ).ask())
-
-runtime = preset_or_custom('runtime', ['10', '30', '60'])
-fps = preset_or_custom('FPS', ['60', '30', '10'])
-split_steps = preset_or_custom('split-steps count', ['250', '500', '1000'])
-surf_res = preset_or_custom(
-    'surface resolution',
-    ['100x100', '250x250', '500x500'],
-    validator=lambda s: all(h.isnumeric() for h in s.split('x')),
-    cast=lambda s: [int(h) for h in s.split('x')]
-)
-render_res = preset_or_custom(
-    'render resolution',
-    ['1920x1080', '3840x2160', '640x480'],
-    validator=lambda s: all(h.isnumeric() for h in s.split('x')),
-    cast=lambda s: [int(h) for h in s.split('x')]
-)
-
-lim = {
-    'x': preset_or_custom(
-        'x limits',
-        ['-10,10', '-5,5', '-1,1'],
-        validator=lambda s: all(is_number(h) for h in s.split(',')),
-        cast=lambda s: [float(h) for h in s.split(',')]
-    ), 'y': preset_or_custom(
-        'y limits',
-        ['-10,10', '-5,5', '-1,1'],
-        validator=lambda s: all(is_number(h) for h in s.split(',')),
-        cast=lambda s: [float(h) for h in s.split(',')]
-    ), 'z': [0, 1]
-}
-
-zoom = preset_or_custom('zoom', ['1', '2', '4'])
+with open(config_path, 'r') as f:
+    config = json.read(f)
+    runtime = config['runtime']
+    fps = config['fps']
+    split_steps = config['split_steps']
+    surf_res = config['surf_res']
+    render_res = config['render_res']
+    render_limits = config['render_limits']
+    eval_limits = config['eval_limits']
+    z_prop = config['z_prop']
+    gauss_center = config['gauss_center']
+    gauss_momentum = config['gauss_momentum']
+    gauss_spread = config['gauss_spread']
 
 render_wavefunction = questionary.select(
     'What to render?',
     ['complex wavefunction', 'probability density']
 ).ask() == 'complex wavefunction'
+
+if render_limits['x'][0] < eval_limits['x'][0] and render_limits['x'][1] > eval_limits['x'][1] and render_limits['y'][0] < eval_limits['y'][0] and render_limits['y'][1] > eval_limits['y'][1]:
+    render_range = {
+        'x': render_limits['x'][1]-render_limits['x'][0],
+        'y': render_limits['y'][1]-render_limits['y'][0]
+    }
+    eval_range = {
+        'x': eval_limits['x'][1]-eval_limits['x'][0],
+        'y': eval_limits['y'][1]-eval_limits['y'][0]
+    }
+    eval_center = {
+        'x': (eval_limits['x'][0]+eval_limits['x'][1])/2,
+        'y': (eval_limits['y'][0]+eval_limits['y'][1])/2
+    }
+    square_size = {
+        'x': surf_res['x'] / render_range['x'],
+        'y': surf_res['y'] / render_range['y']
+    }
+    new_eval_range = {
+        'x': np.ceil(eval_range['x'] / square_size['x']) * square_size['x'],
+        'y': np.ceil(eval_range['y'] / square_size['y']) * square_size['y']
+    }
+    eval_limits = {
+        'x': [
+            eval_center['x'] - new_eval_range['x']/2,
+            eval_center['x'] + new_eval_range['x']/2
+        ],
+        'y': [
+            eval_center['y'] - new_eval_range['y']/2,
+            eval_center['y'] + new_eval_range['y']/2
+        ]
+    }
+else:
+    eval_limits = render_limits
 
 dpi = 100
 figsize = (
@@ -89,8 +99,8 @@ figsize = (
     (render_res[1]/dpi) // 2 * 2
 )
 
-x = cp.linspace(zoom * lim['x'][0], zoom * lim['x'][1], surf_res[0])
-y = cp.linspace(zoom * lim['y'][0], zoom * lim['y'][1], surf_res[1])
+x = cp.linspace(eval_limits['x'][0], eval_limits['x'][1], surf_res['x'])
+y = cp.linspace(eval_limits['y'][0], eval_limits['y'][1], surf_res['y'])
 x, y = cp.meshgrid(x, y, indexing='ij')
 dx = x[1, 0] - x[0, 0]
 dy = y[0, 1] - y[0, 0]
@@ -112,16 +122,13 @@ one = cp.full_like(x, 1)
 zero = cp.full_like(x, 0)
 V_0 = cp.where(mask, inf, zero)
 #V_0 = 0.5 * (x ** 2 + y ** 2)
-potential = lambda t: V_0  # noqa: E731
+potential = cp.where(mask, inf, zero)
 
-#wavefunc = lambda y_, x_: (
-#    cp.exp(-((x_ + 5) ** 2 + y_ ** 2)*2) * cp.exp(2j * y_)
-#    + cp.exp(-((x_ - 5) ** 2 + y_ ** 2)*2) * cp.exp(2j * y_)
-#    + cp.exp(-(x_ ** 2 + (y_ + 5) ** 2)*2) * cp.exp(2j * x_)
-#    + cp.exp(-(x_ ** 2 + (y_ - 5) ** 2)*2) * cp.exp(-2j * x_)
-#)
-
-wavefunc = cp.exp(-(x**2+y**2))*cp.angle(x+1j*y)*cp.where(mask, zero, one)
+wavefunc = cp.exp(
+    1j*(x*gauss_momentum['x'] + y*gauss_momentum['y'])
+    -((x-gauss_center['x'])**2/(2*gauss_spread['x']**2)
+      +(y-gauss_center['y'])**2/(2*gauss_spread['y']**2))
+)
 
 area = cp.sum(wavefunc * cp.conj(wavefunc)) * dx * dy
 psi_0 = wavefunc / cp.sqrt(area)
@@ -136,9 +143,9 @@ def solve_schrodinger(p0, t):
     for i in range(1, len(t)):
         sol[i] = sol[i - 1]
         for t_i in cp.linspace(t[i - 1], t[i], split_steps):
-            sol[i] = cp.exp(-0.5j * h * potential(t_i)) * sol[i]
+            sol[i] = cp.exp(-0.5j * h * potential) * sol[i]
             sol[i] = cp.fft.ifft2(cp.exp(-0.5j * h * k2) * cp.fft.fft2(sol[i]))
-            sol[i] = cp.exp(-0.5j * h * potential(t_i)) * sol[i]
+            sol[i] = cp.exp(-0.5j * h * potential) * sol[i]
             n += 1
         rem = (m / n - 1) * (time.time() - t_0)
         print(f'Evaluating split-step {n}/{m} ({n / m:.2%}) - {format_time(rem)}', end='\r')
@@ -147,14 +154,11 @@ def solve_schrodinger(p0, t):
 
 psi = solve_schrodinger(psi_0, cp.linspace(0, runtime, runtime * fps))
 
-if zoom > 1:
-    zoom_in = lambda a: a[  # noqa: E731
-        int(len(x) / 2 * (1 - 1 / zoom)): int(len(x) / 2 * (1 + 1 / zoom)):,
-        int(len(y) / 2 * (1 - 1 / zoom)): int(len(y) / 2 * (1 + 1 / zoom)):
-    ]
-    psi = cp.array([zoom_in(z) for z in psi])
-    x, y = zoom_in(x), zoom_in(y)
+def zoom_in(a):
+    return a[a[0] > render_limits[0][0]]
 
+psi = cp.array([zoom_in(z) for z in psi])
+x, y = zoom_in(x), zoom_in(y)
 
 x, y, psi = x.get(), y.get(), psi.get()
 
@@ -188,16 +192,16 @@ def find_limit(a: np.ndarray, p):
     return 1
 
 if render_wavefunction:
-    lim['z'][1] = float(find_limit(mod, .95))
+    render_limits['z'] = [0, float(find_limit(mod, .95))]
 else:
-    lim['z'][1] = float(find_limit(rho, .95))
+    render_limits['z'] = [0, float(find_limit(rho, .95))]
 
 def render_frame(i):
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi, subplot_kw={'projection': '3d'})
     canvas = FigureCanvasAgg(fig)
     ax.clear()
 
-    ax.set(xlim=lim['x'], ylim=lim['y'], zlim=lim['z'], xlabel='$x$', ylabel='$y$', zlabel='$r$')
+    ax.set(xlim=render_limits['x'], ylim=render_limits['y'], zlim=render_limits['z'], xlabel='$x$', ylabel='$y$', zlabel='$r$')
     if render_wavefunction:
         surf = ax.plot_surface(x, y, mod[i], cmap=phase_cmap, facecolors=fc[i], antialiased=True)  #, edgecolor='black', linewidth=0.25)
         cbar = fig.colorbar(surf, shrink=0.5, label='$\\theta$')
@@ -228,6 +232,10 @@ with Pool(threads) as pool:
         print(f'Rendered {frame}/{len(psi)} frames ({progress:.2%}) - {format_time(remaining)}', end='\r')
 print(f'\33[2K\rFinished rendering {len(psi)} frames in {format_time(time.time() - time_0)}')
 
-subprocess.run('rm media/output.mp4', shell=True, capture_output=True)
-subprocess.run(f'ffmpeg -r {fps} -i media/frames/frame_%04d.png -pix_fmt yuv420p media/output.mp4', shell=True)
-subprocess.run('mpv media/output.mp4', shell=True)
+if os.path.exists('media/output.mp4'):
+    os.remove('media/output.mp4')
+frames = [iio.imread(f'media/frames/frame_{i:04d}.png') for i in range(len(psi))]
+iio.imwrite('media/output.mp4', frames, fps=fps)
+
+if shutil.which('mpv'):
+    subprocess.run('mpv media/output.mp4', shell=True)
