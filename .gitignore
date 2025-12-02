@@ -1,5 +1,4 @@
 # Extra ignores:
-media/
 media/*
 
 # Byte-compiled / optimized / DLL files
