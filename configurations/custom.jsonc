@@ -15,18 +15,18 @@
         "x": [-10, 10],
         "y": [-10, 10]
     },
-    "z_prop": 0.95, // the program will find an approriate upper z limit such that this is the proportion of the frames are completely enclosed by the limits. note that this does not cut off those z values (they are simply rendered outside of the bounds). setting this to be less than one is helpful if the render ends up having a brief spike, which is often the case with a gaussian wave packet
+    "z_prop": 0.9, // the program will find an approriate upper z limit such that this is the proportion of the frames are completely enclosed by the limits. note that this does not cut off those z values (they are simply rendered outside of the bounds). setting this to be less than one is helpful if the render ends up having a brief spike, which is often the case with a gaussian wave packet
     "gauss_center": { // center of the the initlal wavefunction, a gaussian wavepacket
         "x": 0,
         "y": 0
     },
-    "guass_momentum": { // momentum of the the initlal wavefunction, a gaussian wavepacket
+    "gauss_momentum": { // momentum of the the initlal wavefunction, a gaussian wavepacket
         "x": 0,
         "y": 0
     },
-    "guass_spread": { // spread (std dev) of the the initlal wavefunction, a gaussian wavepacket
-        "x": 5,
-        "y": 5
-    }, // if you want something other than a guassian wavepacket, feel free to dig into the code (look for "wavefunction = " around line 127) and make your own!
-    "potential_field": "harmonic oscillator" // valid presets include "harmonic oscillator", "square well", and "circle well". just like with the wavefunction, feel free to dig into the code (look for "potential = " around)
+    "gauss_spread": { // spread (std dev) of the the initlal wavefunction, a gaussian wavepacket
+        "x": 2,
+        "y": 2
+    }, // if you want something other than a guassian wavepacket, feel free to dig into the code (look for "wavefunction = " around line 141) and make your own!
+    "potential_field": "harmonic oscillator" // valid presets include "harmonic oscillator", "square well", "circle well", "free particle", "coulomb", and "custom". just like with the wavefunction, feel free to dig into the code (look for "potential = " around)
 }

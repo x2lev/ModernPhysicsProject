@@ -1,0 +1,6 @@
+exponentiate
+exponentials
+Maclaurin
+wavefunction
+wavenumber
+LibreTexts

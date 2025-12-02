@@ -4,19 +4,17 @@
 \usepackage[affil-it]{authblk}
 \renewcommand{\Affilfont}{\normalsize\itshape}
 
-\usepackage{amsfonts,amssymb,amscd,amsmath,amsthm,verbatim,calc,graphics,graphicx,physics}
-
-\usepackage{lipsum}
+\usepackage{amsfonts,amssymb,amscd,amsmath,amsthm,verbatim,calc,graphics,graphicx,physics,xcolor}
 
 \usepackage{listings}
 \lstset{
     language=Python,
+    literate={\%}{{\%}}1,
     basicstyle=\ttfamily\small,
     keywordstyle=\color{blue},
     commentstyle=\color{green!60!black},
     stringstyle=\color{red},
     showstringspaces=false,
-    numbers=left,
     numberstyle=\tiny,
     breaklines=true
 }
@@ -24,15 +22,18 @@
 \usepackage[
     backend=biber,
     style=numeric,
-    sorting=nty
+    sorting=ynt
 ]{biblatex}
-\addbibresource{fp.bib}
+\addbibresource{mpp.bib}
 
 \newcommand{\R}{\mathbb{R}}
 \newcommand{\Z}{\mathbb{Z}}
 \newcommand{\N}{\mathbb{N}}
 \newcommand{\Q}{\mathbb{Q}}
 \newcommand{\C}{\mathbb{C}}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
 
 \usepackage{hyperref}
 
@@ -46,7 +47,7 @@
 \maketitle
 
 \begin{abstract}
-    We implement a numerical solver for the two-dimensional Schr\"odinger equation using the split-step method in Python, utilizing the GPU-accelerated CuPy library to compute solutions given an arbitrary potential field and initial wavefunction. We then render the solution using Matplotlib to visualize the time-evolution of the complex wavefunction.
+    We derive a numerical solution to the Schr\"odinger equation using Strang splitting, proving their accuracy to order two. We then use the Fourier Transform to convert the kinetic operator from differentiation to multiplication. Afterwards, we implement this solution for a two-dimensional Schr\"odinger equation using in Python with CuPy.
 \end{abstract}
 
 \section{Introduction}
@@ -56,7 +57,7 @@ It is simple and elegant, stating that the time-evolution of a quantum system de
 
 Classically, the  Hamiltonian represents the total energy of the system. When we know the values of the kinetic and potential energy of the system, we can write the Hamiltonian simply as the sum of the two, $H=T+V$. This idea can be extended to quantum mechanics, though with a slight change in approach. Instead of treating $H$, $T$, and $V$ as having some value, instead we treat them as \textit{operators} (and put little hats on them).
 
-Operators depending on position typically just left-multiply the state that they are acting on, which is the case with the potential operator. Therefore, often $\hat{V}=V(x)$. Meanwhile, the kinetic operator, because it is derived from momentum, involves differentiation with respect to position. Specifically, $\hat{T}=-\frac{1}{2m}\laplacian$.\footnote{For a derivation, see sections 8.1, 8.2, and 9.2 of Leonard Susskind and Art Friedman's book. \cite{susskind}} Thus, if we wish to expand Schr\"odinger equation, we can rewrite it as 
+Operators depending on position typically just left-multiply the state that they are acting on, which is the case with the potential operator. Therefore, often $\hat{V}=V(x)$. Meanwhile, the kinetic operator, because it is derived from momentum, involves differentiation with respect to position. Specifically, $\hat{T}=-\frac{1}{2m}\laplacian$.\footnote{For a derivation, see sections 8.1, 8.2, and 9.2 of Leonard Susskind and Art Friedman's book \cite{susskind}.} Thus, if we wish to expand Schr\"odinger equation, we can rewrite it as 
 \[ i\hbar\pdv{\Psi}{t} = \hat{T}\Psi + \hat{V}\Psi = -\frac{1}{2m}\laplacian{\Psi} + V(x)\Psi.\footnotemark \]
 And if we choose ``natural units'' (that is, $\hbar=m=1$) and multiply by $-i$, we can simplify this to
 \[ \pdv{\Psi}{t} = -i\hat{T}\Psi - i\hat{V}\Psi = \frac{i}{2}\laplacian{\Psi} - iV(x)\Psi. \]
@@ -71,24 +72,105 @@ It may surprise you that we can essentially solve this equation if we treat $x$ 
 \[ \Psi(t) = e^{(-i\hat{T} - i\hat{V})t}. \]
 Now consider a small time-step $\Delta t$. Replacing $t$ with $t+\Delta t$, we get that
 \[ \Psi(t+\Delta t) = e^{(-i\hat{T} - i\hat{V})(t+\Delta t)} = e^{(-i\hat{T} - i\hat{V})t}e^{(-i\hat{T} - i\hat{V})\Delta t}. \]
-Recognize that the first of these exponentials is simply our $\Psi(t)$ from earlier. Therefore, 
-\[ \Psi(t+\Delta t) = e^{(-i\hat{T} - i\hat{V})\Delta t}\Psi(t). \]
-This ends up being a very convenient result---we now have a formula to find the state some small time-step in the future given our present state. Computers are great at solving this kind of problem! Our issue now is dealing with the other exponential: what does it mean to exponentiate an operator? And what does it mean to exponentiate two of them? 
+Recognize that the first of these exponentials is simply our $\Psi(t)$ from earlier. Therefore,
+\[ \Psi(t+\Delta t) = e^{(-i\hat{T} - i\hat{V})\Delta t}\Psi(t) = e^{-i(\hat{T} + \hat{V})\Delta t}\Psi(t). \]
 
-Somewhat surprisingly, this second question is a bit easier to answer. 
+\subsection{Strang Splitting}
+This ends up being a very convenient result---we now have a formula to find the state some small time-step in the future given our present state. Computers are great at solving this kind of problem! But an unfortunate result with operators is that, unless they commute, $e^{\hat{A}+\hat{B}}\ne e^{\hat{A}}e^{\hat{B}}$. A common approximation is the Strang Splitting method:
+\[ e^{\hat{A}+\hat{B}}\approx e^{\frac{1}{2}\hat{A}}e^{\hat{B}}e^{\frac{1}{2}\hat{A}}. \]
 
-\section{References}
-\begin{enumerate}
-    \item Leonard Susskind and Art Friedman, \textit{Quantum Mechanics: The Theoretical Minimum}, Basic Books, 2014.
+Similarly to what Wu does for Lie-Trotter Splitting \cite{wu}, we will show that it is accurate to order two for the Schr\"odinger eqation by the Baker-Campbell-Hausdorff Formula:
+\begin{theorem} \label{formula:bch}
+    The operator solution $\hat{C}$ to the equation $e^{\hat{A}}e^{\hat{B}}=e^{\hat{C}}$ is given by
+    \[
+    \hat{C}
+    = \hat{A} + \hat{B} + \frac{1}{2}[\hat{A}, \hat{B}]
+    + \frac{1}{12}\pqty{[\hat{A}, [\hat{A}, \hat{B}]] + [\hat{B}, [\hat{B}, \hat{A}]]}
+    + \cdots
+    \]
+\end{theorem}
+\begin{proposition}
+    The Strang split method is accurate to order two for the Schr\"odinger equation.
+\end{proposition}
+\begin{proof}
+    Consider $A=-iV\Delta t$ and $B=-iT\Delta t$. By the Strang splitting method,
+    \[ e^{-i(\hat{T} + \hat{V})\Delta t}=e^{-i\hat{V}\Delta t - i\hat{T}\Delta t}\approx e^{-\frac{i}{2}\hat{V}\Delta t}e^{-i\hat{T}\Delta t}e^{-\frac{i}{2}\hat{V}\Delta t}. \]
+    We will employ BCH on the second two terms, and then combine the result with the first term. But first, recognize that including any nested commutators yields terms in $\Delta t^3$ as so:
+    \[ [\hat{A}\Delta t, [\hat{B}\Delta t, \hat{C}\Delta t]] = [\hat{A}\Delta t, \Delta t^2[\hat{B}, \hat{C}]] = \Delta t^3[\hat{A}, [\hat{B}, \hat{C}]]. \]
+    As such, any nested commutators we will discard as being $\mathcal{O}(3)$ error.
+    Observe the following:
+    \begin{align*}
+        e^{-\frac{i}{2}\hat{V}\Delta t}e^{-i\hat{T}\Delta t}e^{-\frac{i}{2}\hat{V}\Delta t}
+            &= e^{-\frac{i}{2}\hat{V}\Delta t}e^{-i\hat{T}\Delta t -\frac{i}{2}\hat{V}\Delta t + \frac{1}{2}[-i\hat{T}\Delta t, -\frac{i}{2}\hat{V}\Delta t] + \mathcal{O}(3)} \\
+            &= e^{-\frac{i}{2}\hat{V}\Delta t}e^{-i\Delta t(\hat{T}+\frac{1}{2}\hat{V}) - \frac{1}{4}\Delta t^2[\hat{T}, \hat{V}] + \mathcal{O}(3)} \\
+            &= e^{-\frac{i}{2}\hat{V}\Delta t + (-i\Delta t(\hat{T}+\frac{1}{2}\hat{V}) - \frac{1}{4}\Delta t^2[\hat{T}, \hat{V}] + \mathcal{O}(3)) + \frac{1}{2}[-\frac{i}{2}\hat{V}\Delta t, (-i\Delta t(\hat{T}+\frac{1}{2}\hat{V}) - \frac{1}{4}\Delta t^2[\hat{T}, \hat{V}] + \mathcal{O}(3))] + \mathcal{O}(3)} \\
+            &= e^{-\frac{i}{2}\hat{V}\Delta t - i\Delta t(\hat{T}+\frac{1}{2}\hat{V}) - \frac{1}{4}\Delta t^2[\hat{T}, \hat{V}] + \frac{1}{2}[-\frac{i}{2}\hat{V}\Delta t, -i\Delta t(\hat{T}+\frac{1}{2}\hat{V})] + \mathcal{O}(3)} \\
+            &= e^{- i\Delta t(\hat{T}+\hat{V}) - \frac{1}{4}\Delta t^2[\hat{T}, \hat{V}] - \frac{1}{4}\Delta t^2[\hat{V}, \hat{T}+\frac{1}{2}\hat{V}] + \mathcal{O}(3)} \\
+            &= e^{- i\Delta t(\hat{T}+\hat{V}) - \frac{1}{4}\Delta t^2[\hat{T}, \hat{V}] - \frac{1}{4}\Delta t^2[\hat{V}, \hat{T}] - \frac{1}{4}\Delta t^2[\hat{V}, \frac{1}{2}\hat{V}] + \mathcal{O}(3)} \\
+            &= e^{- i\Delta t(\hat{T}+\hat{V}) - \frac{1}{4}\Delta t^2[\hat{T}, \hat{V}] + \frac{1}{4}\Delta t^2[\hat{T}, \hat{V}] - \frac{1}{8}\Delta t^2[\hat{V}, \hat{V}] + \mathcal{O}(3)} \\
+            &= e^{- i\Delta t(\hat{T}+\hat{V}) + \mathcal{O}(3)}.
+    \end{align*}
+    Evidently, Strang splitting is accurate to order two.  
+\end{proof}
+Going forward, we will now utilize the approximation
+\[ \Psi(t+\Delta t) = e^{-i\hat{V}\Delta t - i\hat{T}\Delta t}\Psi(t)\approx e^{-\frac{i}{2}\hat{V}\Delta t}e^{-i\hat{T}\Delta t}e^{-\frac{i}{2}\hat{V}\Delta t}\Psi(t). \]
 
-    \item \label{1} Shuai Wu, \href{https://shuai-wu-math.github.io/notes/OSM.pdf}{``Operator Splitting Method for Schr\"odinger Equation''}, accessed November 2025.
+\section{Fourier Transform of the Kinetic Operator}
+With the potential operator being multiplicative, the $e^{-\frac{i}{2}\hat{V}\Delta t}$ operator is also a simple multiplicative operator and will be evaluated easily. What isn't easy is the $e^{-i\hat{T}\Delta t}$ operator, since it still involves differentiation. To bypass this we will, after applying the first $e^{-\frac{i}{2}\hat{V}\Delta t}$ operator, utilize the Fourier Transform to transform $\Psi$ into the momentum basis. Once in the momentum basis, differentiation with respect to position becomes simple multiplication. Then we will utilize the Inverse Fourier Transform to transform back into the position basis before applying the final $e^{-\frac{i}{2}\hat{V}\Delta t}$ operator.
 
-    \item \label{2} Christina C. Lee, \href{https://albi3ro.github.io/M4/Time-Evolution.html}{``Time Evolution Split Operator Method''}, accessed November 2025.
-    
-    \item \label{3} James Schloss, \href{https://www.algorithm-archive.org/contents/split-operator_method/split-operator_method.html}{``The Split-Operator Method''}, accessed November 2025.
-    
-    \item \label{4} Russell Herman, \href{https://math.libretexts.org/Bookshelves/Differential_Equations/Introduction_to_Partial_Differential_Equations_(Herman)/09%3A_Transform_Techniques_in_Physics/9.05%3A_Properties_of_the_Fourier_Transform}{``Properties of the Fourier Transform''}, accessed November 2025.
-\end{enumerate}
+While it may seem like performing two integrals would take just as long, if not longer, than twice differentiating, in fact with the use of the Fast Fourier Transform (FFT) this process is indeed much faster. The image that James Schloss \cite{schloss} utilizes in his article is a helpful aid in understanding this process (note the use of $\hat{U}_r\qty(\frac{dt}{2})$ and $\hat{U}_k\qty(dt)$ in place of $e^{-\frac{i}{2}\hat{V}\Delta t}$ and $e^{-i\hat{T}\Delta t}$ respectively):
+\begin{center}
+    \includegraphics[height=0.45\linewidth]{split_op_method.png}
+\end{center}
+
+Recall the definition of the kinetic operator, $\hat{T}=-\frac{1}{2}\laplacian$. Let's perform a Fourier Transform of $\hat{T}$ acting on some $\psi(x)$ and observe the result:
+\[ \mathcal{F}\qty[\hat{T}\psi(x)] = \mathcal{F}\qty[-\frac{1}{2}\laplacian\psi(x)] = -\frac{1}{2}\mathcal{F}\qty[\laplacian\psi(x)] = -\frac{1}{2}\int_{-\infty}^\infty \laplacian\psi(x) e^{ikx} dx. \]
+Utilizing the result from Russel Herman's entry in section 9.5 of LibreTexts Mathematics \cite{herman}, since the Laplacian operator ($\laplacian$) is nothing but a linear combination of second derivatives (keep in mind the use of the typical notation $\tilde{\psi}(k)$ in place of $\mathcal{F}\qty[\psi(x)]$):
+\[ -\frac{1}{2}\int_{-\infty}^\infty \laplacian\psi(x) e^{ikx} dx = -\frac{1}{2}(-ik)^2\tilde{\psi}(k) = \frac{1}{2}k^2\tilde{\psi}(k). \]
+The $k$ in this expression happens to be a variable representing the angular wavenumber, which we can easily find in advance. Now consider the Fourier Transform of $e^{-i\hat{T}\Delta t}\psi(x)$. Recall that that operator exponentiation is defined simply using the Maclaurin Series for the exponential, meaning that for some operator $\hat{O}$, $e^{\hat{O}}=\sum_{n=0}^\infty \frac{\hat{O}^n}{n!}$.\footnote{Keep in mind that $\hat{O}^n$ represents repeated application of the operator $\hat{O}$. For example, if $\hat{O}=\dv{x}$, then $\hat{O}^2=\dv{x}(\dv{x})=\dv[2]{x}$, $\hat{O}^3=\dv{x}(\dv{x}(\dv{x}))=\dv[3]{x}$} Observe the following:
+\begin{align*}
+    \mathcal{F}\qty[e^{-i\hat{T}\Delta t}\psi(x)]
+        &= \mathcal{F}\qty[\sum_{n=0}^\infty \frac{(-i\hat{T}\Delta t)^n\psi(x)}{n!}] \\
+        &= \sum_{n=0}^\infty \frac{\mathcal{F}\qty[(-i\hat{T}\Delta t)^n\psi(x)]}{n!} \\
+        &= \sum_{n=0}^\infty \frac{(-i\Delta t)^n\mathcal{F}\qty[\hat{T}^n\psi(x)]}{n!} \\
+        &= \sum_{n=0}^\infty \frac{(-i\Delta t)^n(\frac{1}{2}k^2)^n}{n!}\tilde{\psi}(k) \\
+        &= \sum_{n=0}^\infty \frac{(-\frac{1}{2}ik^2\Delta t)^n}{n!}\tilde{\psi}(k) \\
+        &= e^{-\frac{i}{2}k^2\Delta t}\tilde{\psi}(k)
+\end{align*}
+
+
+We are now, essentially, done with the theoretical aspect of the derivation. Our final result which we will now work to implement is 
+\[ \Psi(t+\Delta t) \approx e^{-\frac{i}{2}\hat{V}\Delta t}\mathcal{F}^{-1}\qty[e^{-\frac{i}{2}k^2\Delta t}\mathcal{F}\qty[e^{-\frac{i}{2}\hat{V}\Delta t}\Psi(t)]]. \]
+
+\pagebreak
+\section{Implementing the Solver}
+All the work we have done up until this point ends up being distilled in just these three lines:
+\begin{lstlisting}
+sol[i] = cp.exp(-0.5j * h * potential) * sol[i]
+sol[i] = cp.fft.ifft2(cp.exp(-0.5j * h * k2) * cp.fft.fft2(sol[i]))
+sol[i] = cp.exp(-0.5j * h * potential) * sol[i]
+\end{lstlisting}
+What the solver does is run these three lines of code repeatedly, typically hundreds of times per frame, to carefully evolve the solution in time. That is why each element in the solution array \lstinline|sol| gets repeatedly reassigned, only saving once the final split-step of the frame is performed. Going line-by-line you can see each of the three exponentials of the equation above represented, just split up to make the code more readable.
+
+To make the comparison easier, take a look at the following conversion table:
+\begin{center}
+    \begin{tabular}{|c|c|}
+        \hline
+        Math Symbols & Python Code \\ \hline
+        \hline
+        $\Psi(t)$ & \lstinline|sol[i]| \\ \hline
+        $e^{\ldots}$ & \lstinline|cp.exp(...)| \\ \hline
+        $-\frac{i}{2}$ & \lstinline|-0.5j| \\ \hline
+        $\Delta t$ & \lstinline|h| \\ \hline
+        $\hat{V}$ & \lstinline|potential| \\ \hline
+        $k^2$ & \lstinline|k2| \\ \hline
+        $\mathcal{F}[\ldots]$ & \lstinline|cp.fft.fft2(...)| \\ \hline
+        $\mathcal{F}^{-1}[\ldots]$ & \lstinline|cp.fft.ifft2(...)| \\ \hline
+    \end{tabular}
+\end{center}
+
+\section{Results}
+The first half of the program is essentially just a wrapper for these three lines of code. It loops hundreds of thousands, if not millions, of times through them. Once the GPU is done performing all the necessary calculations, the CPU (ironically) gets to work rendering the result with Matplotlib. There is some additional niceties I implemented for the program---several preconfigured jsonc files for interesting potential fields. If you'd like to check it out the entire project is on my \href{https://github.com/x2lev/ModernPhysicsProject}{GitHub}, both the simulator and the \LaTeX file you are currently reading!
 
 \printbibliography
 

@@ -3,11 +3,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import cupy as cp
 import imageio.v3 as iio
+import commentjson as json
 import questionary
 import subprocess
 import shutil
 import time
-import json
 import os
 
 from matplotlib.colors import LinearSegmentedColormap
@@ -35,13 +35,13 @@ plt.rcParams.update({
     'font.size': 20
 })
 
-config_path = questionary.select(
-    'Choose file to read configuration from (you may edit any of these as you wish. see custom.jsonc for explanations as to what each parameter changes):',
-    [f'configurations/{c}' for c in os.listdir('configurations')]
+config_name = questionary.select(
+    'Choose file to read configuration from (you may edit any of these. see custom.jsonc for explanations):',
+    sorted([c for c in os.listdir('configurations') if c != 'custom.jsonc']) + ['custom.jsonc']
 ).ask()
 
-with open(config_path, 'r') as f:
-    config = json.read(f)
+with open(f'configurations/{config_name}', 'r') as f:
+    config = json.load(f)
     runtime = config['runtime']
     fps = config['fps']
     split_steps = config['split_steps']
@@ -53,6 +53,7 @@ with open(config_path, 'r') as f:
     gauss_center = config['gauss_center']
     gauss_momentum = config['gauss_momentum']
     gauss_spread = config['gauss_spread']
+    potential_field = config['potential_field']
 
 render_wavefunction = questionary.select(
     'What to render?',
@@ -114,16 +115,29 @@ ky = cp.fft.fftfreq(y.shape[1], d=dy) * 2 * cp.pi
 kx, ky = cp.meshgrid(kx, ky, indexing='ij')
 k2 = kx ** 2 + ky ** 2
 
-#mask = (x<=.1) & (x>=-.1) & ((y>=2.5) | ((y<=1.5) & (y>=-1.5)) | (y<=-2.5))
-#mask = (x+y>5) | (x+y<-5)
-mask = x**2 + y**2 > 64
 inf = cp.full_like(x, 1_000_000)
 one = cp.full_like(x, 1)
 zero = cp.full_like(x, 0)
-V_0 = cp.where(mask, inf, zero)
-#V_0 = 0.5 * (x ** 2 + y ** 2)
-potential = cp.where(mask, inf, zero)
-
+match potential_field:
+    case 'harmonic oscillator':
+        potential = 0.5 * (x ** 2 + y ** 2)
+    case 'square well':
+        mask = (x<=.1) & (x>=-.1) & ((y>=2.5) | ((y<=1.5) & (y>=-1.5)) | (y<=-2.5))
+        potential = cp.where(mask, inf, zero)
+    case 'circle well':
+        mask = x**2 + y**2 > 64
+        potential = cp.where(mask, inf, zero)
+    case 'free particle':
+        potential = zero
+    case 'coulomb':
+        potential = 10 / (x**2+y**2)
+    case 'custom':
+        potential = None # implement your own!
+        assert potential is not None, 'Implement your own potential field!'
+    case _:
+        raise ValueError('Choose a potential!')
+            
+# feel free to implement your own!
 wavefunc = cp.exp(
     1j*(x*gauss_momentum['x'] + y*gauss_momentum['y'])
     -((x-gauss_center['x'])**2/(2*gauss_spread['x']**2)
@@ -155,7 +169,13 @@ def solve_schrodinger(p0, t):
 psi = solve_schrodinger(psi_0, cp.linspace(0, runtime, runtime * fps))
 
 def zoom_in(a):
-    return a[a[0] > render_limits[0][0]]
+    mask = (
+        (a[0] >= render_limits['x'][0]) &
+        (a[0] <= render_limits['x'][1]) &
+        (a[1] >= render_limits['y'][0]) &
+        (a[1] <= render_limits['y'][1])
+    )
+    return a[:, mask]
 
 psi = cp.array([zoom_in(z) for z in psi])
 x, y = zoom_in(x), zoom_in(y)
