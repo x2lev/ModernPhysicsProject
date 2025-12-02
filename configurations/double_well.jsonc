@@ -1,5 +1,5 @@
 {
-    "runtime": 10,
+    "runtime": 20,
     "fps": 60,
     "split_steps": 250,
     "surf_res": {
@@ -18,15 +18,15 @@
     "z_prop": 0.9,
     "gauss_center": {
         "x": 0,
-        "y": 10
+        "y": -3.5
     },
     "gauss_momentum": {
         "x": 0,
-        "y": -20
+        "y": 0
     },
     "gauss_spread": {
-        "x": 1,
-        "y": 1
+        "x": 4,
+        "y": 4
     },
-    "potential_field": "coulomb"
+    "potential_field": "double well"
 }

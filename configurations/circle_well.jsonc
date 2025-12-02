@@ -1,5 +1,5 @@
 {
-    "runtime": 10,
+    "runtime": 30,
     "fps": 60,
     "split_steps": 250,
     "surf_res": {
@@ -25,8 +25,8 @@
         "y": 0
     },
     "gauss_spread": {
-        "x": 2,
-        "y": 2
+        "x": 1,
+        "y": 1
     },
-    "potential_field": "circle_well"
+    "potential_field": "circle well"
 }

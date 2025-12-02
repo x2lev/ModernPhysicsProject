@@ -116,6 +116,7 @@ kx, ky = cp.meshgrid(kx, ky, indexing='ij')
 k2 = kx ** 2 + ky ** 2
 
 inf = cp.full_like(x, 1_000_000)
+thou = cp.full_like(x, 1_000)
 one = cp.full_like(x, 1)
 zero = cp.full_like(x, 0)
 match potential_field:
@@ -129,8 +130,8 @@ match potential_field:
         potential = cp.where(mask, inf, zero)
     case 'free particle':
         potential = zero
-    case 'coulomb':
-        potential = 10 / (x**2+y**2)
+    case 'double well':
+        potential = (x**2+y**2)**2/100-(x**2+y**2)/4+2
     case 'custom':
         potential = None # implement your own!
         assert potential is not None, 'Implement your own potential field!'

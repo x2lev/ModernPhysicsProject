@@ -8,7 +8,7 @@ Numerical solver for the 2D time-dependent Schrödinger equation using the split
 python main.py
 ```
 
-Select a configuration file and choose visualization type. Output saved to `media/output.mp4`.
+Select a configuration file and choose visualization type. Output saved to `media/output.mp4`. Some example videos can be found in [this playlist on YouTube](https://youtube.com/playlist?list=PLHH1EiZsu_gt0se-nknGVan4IIjMcRxDP&si=WmvT9c9WGguMfkac).
 
 ## Requirements
 
@@ -20,14 +20,10 @@ Select a configuration file and choose visualization type. Output saved to `medi
 - commentjson
 - questionary
 
-*requires CUDA- or ROCm-capable GPU. If you wish to get this code up and running without such a GPU, please reach out to lev.kryvenko@proton.me!
+*requires CUDA- or ROCm-capable GPU. If you wish to get this code up and running without such a GPU, please reach out to me at lev.kryvenko@proton.me!
 
 ## Configuration
 
-Edit JSON files in `configurations/` to change simulation parameters.
+Edit the JSONC files in `configurations/` to change simulation parameters.
 
-See `mpp.pdf` for the theoretical derivations of the split-operator method.
-
-## Result
-
-Output video files are saved as 'media/output.mp4'.
+See `tex/mpp.pdf` for a theoretical derivation of the split-operator method.
