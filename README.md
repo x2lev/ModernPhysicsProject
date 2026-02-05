@@ -20,7 +20,7 @@ Select a configuration file and choose visualization type. Output saved to `medi
 - commentjson
 - questionary
 
-*requires CUDA- or ROCm-capable GPU. If you wish to get this code up and running without such a GPU, please reach out to me at lev.kryvenko@proton.me!
+*requires CUDA- or ROCm-capable GPU. If not available, code can be refactored to use NumPy instead of CuPy.
 
 ## Configuration
 

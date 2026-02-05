@@ -4,3 +4,4 @@ Maclaurin
 wavefunction
 wavenumber
 LibreTexts
+Wavefunction
