@@ -7,13 +7,9 @@
         "y": 100
     },
     "render_res": [1920, 1080],
-    "render_limits": {
+    "limits": {
         "x": [-10, 10],
         "y": [-10, 10]
-    },
-    "eval_limits": {
-        "x": [-15, 15],
-        "y": [-15, 15]
     },
     "z_prop": 0.9,
     "gauss_center": {

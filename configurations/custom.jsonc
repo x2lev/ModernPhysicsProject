@@ -7,11 +7,7 @@
         "y": 100
     },
     "render_res": [1920, 1080], // render resolution. increases render time slightly.
-    "render_limits": { // boundary x and y values of surface
-        "x": [-10, 10],
-        "y": [-10, 10]
-    },
-    "eval_limits": { // actual boundary x and y values. helpful to increase if there is too much edge noise. note that these will be automatically adjusted to ensure that surf_res stays true
+    "limits": { // boundary x and y values of surface
         "x": [-10, 10],
         "y": [-10, 10]
     },
