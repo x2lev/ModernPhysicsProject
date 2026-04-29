@@ -1,4 +1,3 @@
-from multiprocessing import Pool, cpu_count
 import matplotlib.pyplot as plt
 import numpy as np
 import cupy as cp
@@ -49,6 +48,7 @@ def render_frame(i):
             labels=['$-\\pi$', '$-\\frac{\\pi}{2}$', '$0$', '$\\frac{\\pi}{2}$', '$\\pi$']
         )
     else:
+        ax.set(zlabel='$r^2$')
         ax.plot_surface(x, y, rho[i], cmap='viridis', antialiased=True)
     ax.view_init(elev=25, azim=25)
     ax.set_title(f'Frame {i + 1}/{len(mod)}')
@@ -82,7 +82,6 @@ if __name__ == '__main__':
         os.remove(os.path.join('media/frames', file))
 
     plt.rcParams.update({
-        'text.usetex': True,
         'font.family': 'Fira Sans',
         'font.size': 20
     })
@@ -156,7 +155,7 @@ if __name__ == '__main__':
         case 'double well':
             potential = (x**2+y**2)**2/100-(x**2+y**2)/4+2
         case 'custom':
-            potential = None # implement your own!
+            potential = 0.5 * ((x - 5) ** 2 + y ** 2) + 0.5 * ((x + 5) ** 2 + y ** 2)
             assert potential is not None, 'Implement your own potential field!'
         case _:
             raise ValueError('Choose a potential!')
@@ -198,18 +197,16 @@ if __name__ == '__main__':
     else:
         limits['z'] = [0, float(find_limit(rho, .95))]
 
-
-    threads = cpu_count() - 1  # Leave one core free
-    print(f'Rendering with Matplotlib on {threads} threads...')
+    print(f'Rendering with Matplotlib...')
     render_args = range(len(psi))
 
     time_0 = time.time()
-    with Pool(threads) as pool:
-        for frame, _ in enumerate(pool.imap(render_frame, render_args), 1):
-            progress = frame / len(psi)
-            elapsed = time.time() - time_0
-            remaining = (1 / progress - 1) * elapsed
-            print(f'Rendered {frame}/{len(psi)} frames ({progress:.2%}) - {format_time(remaining)}', end='\r')
+    for i in range(len(psi)):
+        render_frame(i)
+        progress = (i + 1) / len(psi)
+        elapsed = time.time() - time_0
+        remaining = (1 / progress - 1) * elapsed
+        print(f'Rendered {i+1}/{len(psi)} frames ({progress:.2%}) - {format_time(remaining)}', end='\r')
     print(f'\33[2K\rFinished rendering {len(psi)} frames in {format_time(time.time() - time_0)}')
 
     if os.path.exists('media/output.mp4'):

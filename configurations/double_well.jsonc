@@ -1,7 +1,7 @@
 {
     "runtime": 20,
-    "fps": 60,
-    "split_steps": 250,
+    "fps": 30,//60,
+    "split_steps": 100,//250,
     "surf_res": {
         "x": 100,
         "y": 100
